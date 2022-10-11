@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 import pandas as pd
-import regex as re
+import re
 
 
 class CSVConv:
