@@ -1,0 +1,39 @@
+{
+  "input_file": "",
+  "input_dir": "examples\\input_column_filter_no_headers",
+  "input_header": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F"
+  ],
+  "delimiter": ",",
+  "output_file": "",
+  "output_dir": "examples\\output",
+  "output_header": [
+    "This was B",
+    "This was D",
+    "This was F",
+    "Taken from file name"
+  ],
+  "output_types": [
+    "xlsx",
+    "csv"
+  ],
+  "sort_by": [
+    "Taken from file name",
+    "This was B",
+    "This was D",
+    "This was F"
+  ],
+  "header_from_file_name": {
+    "Taken from file name": "^.*_(.*)\\.csv$"
+  },
+  "header_map": {
+    "This was B": "A",
+    "This was D": "D",
+    "This was F": "F"
+  }
+}
