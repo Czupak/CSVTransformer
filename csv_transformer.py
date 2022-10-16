@@ -1,30 +1,43 @@
 import argparse
+import glob
 import json
 import sys
+import os
 import pandas as pd
 import re
 
 
 class CSVConv:
 
-    def __init__(self, debug=False):
-        self.debug = debug
+    def __init__(self,
+                 profile=None,
+                 input=None,
+                 input_dir=None,
+                 output=None,
+                 output_dir=None,
+                 silent=False):
+        self.profile = profile
+        self.input_file = input
+        self.input_dir = input_dir
+        self.output_file = output
+        self.output_dir = output_dir
+        self.silent = silent
+
         self.params = {}
+        self.read_json_params()
+        self.validate_params()
+
         self.df = None
-        self._possible_params = [
-            'input_file', 'output_file', 'output_header', 'sort_by',
-            'input_header', 'delimiter', 'header_from_file_name', 'header_map'
-        ]
 
-    def print(self, msg):
-        if self.debug:
-            print(msg)
+    def print(self, msg, lvl=0):
+        if not self.silent:
+            print(f'{lvl*" "}{msg}')
 
-    def process_header_from_file_name(self):
+    def process_header_from_file_name(self, file_name):
         if self.params['header_from_file_name'] is not None:
             for col in self.params['header_from_file_name'].keys():
                 regex = self.params['header_from_file_name'][col]
-                reg_res = re.match(regex, self.params['input_file'])
+                reg_res = re.match(regex, file_name)
                 if reg_res:
                     self.df[col] = reg_res[1]
                 else:
@@ -39,86 +52,102 @@ class CSVConv:
                 else:
                     self.df[col] = ''
 
-    def read_json_params(self, json_file):
-        self.print(f'Reading {json_file}...')
+    def read_json_params(self):
+        self.print(f'Reading {self.profile}...')
         try:
-            with open(json_file, 'r') as fh:
-                params = json.load(fh)
-                for key in params.keys():
-                    self.set_param(key, params[key])
+            with open(self.profile, 'r') as fh:
+                self.params = json.load(fh)
         except Exception as e:
             sys.exit(e)
 
-    def set_param(self, param, value):
-        if param not in self._possible_params:
-            sys.exit(f'{param} not supported')
-        self.params[param] = value
-
-    def set_params(self,
-                   input_file,
-                   output_file,
-                   output_header,
-                   sort_by,
-                   input_header=(),
-                   delimiter=',',
-                   header_from_file_name=None,
-                   header_map=None):
-        self.params = {}
-        self.df = None
-        for param in self._possible_params:
-            self.set_param(locals().get(param, None))
+    def _get_param_if_exist(self, param):
+        if param in self.params.keys() and self.params[param] not in [
+                None, ""
+        ]:
+            return self.params[param]
+        return None
 
     def validate_params(self):
-        for param in self._possible_params:
-            if param not in self.params.keys():
-                sys.exit(f'Missing {param}!')
+        for param in ['input_file', 'input_dir', 'output_file', 'output_dir']:
+            val = self._get_param_if_exist(param)
+            setattr(self, param, val)
 
-    def convert(self):
-        self.validate_params()
-        self.print(f'Reading from {self.params["input_file"]}...')
+    def convert_one(self, input_file, output_file):
+        self.print(f'[CSV] Reading from {input_file}...', 2)
         kw_args = {'delimiter': self.params['delimiter']}
         if len(self.params['input_header']) > 0:
             kw_args['names'] = self.params['input_header']
-        self.df = pd.read_csv(self.params['input_file'], **kw_args)
-        self.print("Converting...")
-        self.process_header_from_file_name()
+        self.df = pd.read_csv(input_file, **kw_args)
+        self.print("Converting...", 4)
+        self.process_header_from_file_name(input_file)
         self.process_header_map()
         self.df = self.df[self.params['output_header']].reset_index(drop=1)
         self.df = self.df.sort_values(by=self.params['sort_by'])
-        self.print(f"Writing to {self.params['output_file']}...")
-        self.df.to_csv(self.params['output_file'], index=False)
+
+        output_types = self._get_param_if_exist('output_types')
+        if output_types is None:
+            output_types = ["csv"]
+        for type in output_types:
+            if type == 'csv':
+                self.print(f"[CSV] Writing to {output_file}...", 2)
+                with open(output_file, 'w') as fh:
+                    fh.write('sep=,\n')
+                self.df.to_csv(output_file, index=False, mode='a')
+            if type == 'xlsx':
+                xls_file = os.path.splitext(output_file)[0] + ".xlsx"
+                self.print(f"[XLSX] Writing to {xls_file}...", 2)
+                self.df.to_excel(xls_file, index=False)
+
+    def convert(self):
+        if self.input_dir is not None:
+            if not os.path.exists(self.input_dir):
+                sys.exit(f'Path does not exist: [input_dir={self.input_dir}]!')
+            csv_files = glob.glob(os.path.join(self.input_dir, '*.csv'))
+            counter = 0
+            for csv_file in sorted(csv_files):
+                counter += 1
+                self.print(f'{counter}/{len(csv_files)}', 2)
+                out_file = os.path.join(self.output_dir,
+                                        os.path.basename(csv_file))
+                self.convert_one(csv_file, out_file)
+        else:
+            self.print(f'1/1', 2)
+            self.convert_one(self.input_file, self.output_file)
+
         self.print(f'Done!')
 
 
 def get_options():
     args = sys.argv[1:]
     parser = argparse.ArgumentParser(
-        description="Example: python csv_transformer.py -p profile.json [-i input.csv] [-o output.csv] [-v]")
+        description="Example: python csv_transformer.py -p profile.json "
+        "[-i input.csv] [-o output.csv] [-id input_dir] [-od output_dir] [-v]")
     parser.add_argument("-p",
                         "--profile",
                         help="JSON Profile file",
                         required=True)
-    parser.add_argument("-i",
-                        "--input",
-                        help="CSV input file")
-    parser.add_argument("-o",
-                        "--output",
-                        help="CSV output file")
-    parser.add_argument("-v",
-                        "--verbose",
-                        dest='verbose',
+    parser.add_argument("-i", "--input", help="CSV input file")
+    parser.add_argument("-o", "--output", help="CSV output file")
+    parser.add_argument("-id",
+                        "--input_dir",
+                        help="Directory with CSV input files")
+    parser.add_argument("-od",
+                        "--output_dir",
+                        help="Directory for CSV output files")
+    parser.add_argument("-s",
+                        "--silent",
+                        dest='silent',
                         action='store_true',
-                        help="Verbose mode.")
+                        help="Silent mode.")
     return parser.parse_args(args)
 
 
 if __name__ == '__main__':
     options = get_options()
-    if options.profile:
-        converter = CSVConv(debug=options.verbose)
-        converter.read_json_params(options.profile)
-        if options.input:
-            converter.set_param('input_file', options.input)
-        if options.output:
-            converter.set_param('output_file', options.output)
-        converter.convert()
+    kwargs = {}
+    for param in [
+            'silent', 'profile', 'input', 'output', 'input_dir', 'output_dir'
+    ]:
+        kwargs[param] = getattr(options, param)
+    converter = CSVConv(**kwargs)
+    converter.convert()
